@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>音乐播放器</title>
+<style>
+:root { --bg:#121212; --panel:#1a1a1a; --border:#262626; --accent:#4a8cff; --text:#e8e8e8; --sub:#7a7a7a; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  background: var(--bg); color: var(--text);
+  font-family: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  height: 100vh; display: flex; flex-direction: column;
+  padding: 16px; gap: 12px; overflow: hidden;
+}
+.header { text-align: center; padding-top: 10px; }
+.header h1 { font-size: 18px; font-weight: 600; margin-bottom: 4px; }
+.header p { font-size: 12px; color: var(--sub); }
+
+/* 修改为点击区域，兼容手机 */
+.drop-zone {
+  display: block; border: 2px dashed var(--border); border-radius: 12px;
+  padding: 24px 20px; text-align: center; color: var(--sub);
+  font-size: 14px; transition: all .2s; cursor: pointer;
+  background: var(--panel);
+}
+.drop-zone:active, .drop-zone:hover {
+  border-color: var(--accent); color: var(--accent);
+  background: rgba(74,140,255,.05);
+}
+.drop-zone input[type="file"] { display: none; }
+
+#playlist {
+  flex: 1; overflow-y: auto; background: var(--panel);
+  border: 1px solid var(--border); border-radius: 10px; padding: 6px;
+  min-height: 100px;
+}
+#playlist::-webkit-scrollbar { width: 4px; }
+#playlist::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+
+.track {
+  padding: 12px 14px; border-radius: 6px; cursor: pointer;
+  display: flex; align-items: center; gap: 10px;
+  font-size: 13px; color: #c8c8c8; transition: background .15s;
+}
+.track:hover { background: #202020; }
+.track.active { background: #2d4a7a; color: #fff; }
+.track .icon { font-size: 14px; width: 18px; text-align: center; }
+.track .name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.track .badge {
+  font-size: 10px; padding: 2px 6px; border-radius: 4px;
+  background: #2a2a2a; color: var(--sub);
+}
+.track .badge.locked { background: #4a2a2a; color: #e88; }
+
+.now-playing {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 10px; padding: 12px 16px;
+}
+.now-title {
+  font-size: 15px; font-weight: 600; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.now-sub { font-size: 12px; color: var(--sub); text-align: center; margin-top: 4px; }
+
+.progress-row {
+  display: flex; align-items: center; gap: 10px; margin-top: 12px;
+}
+.time { font-size: 12px; color: var(--sub); width: 44px; flex-shrink: 0; }
+.time.right { text-align: right; }
+
+input[type="range"] {
+  -webkit-appearance: none; flex: 1; height: 4px;
+  background: #2a2a2a; border-radius: 2px; outline: none; cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px;
+  border-radius: 50%; background: #fff; cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0,0,0,.4);
+}
+input[type="range"]::-moz-range-thumb {
+  width: 14px; height: 14px; border-radius: 50%;
+  background: #fff; border: none; cursor: pointer;
+}
+
+.controls {
+  display: flex; align-items: center; justify-content: center;
+  gap: 12px; margin-top: 12px;
+}
+.btn {
+  background: #1f1f1f; border: 1px solid #2c2c2c; border-radius: 9px;
+  color: var(--text); padding: 10px 16px; font-size: 14px; cursor: pointer;
+  transition: all .15s; user-select: none;
+}
+.btn:active { background: #161616; }
+.btn.play {
+  background: var(--accent); border: none; font-size: 18px;
+  padding: 12px 24px; min-width: 70px;
+}
+.btn.play:active { background: #3a5d95; }
+.btn.small { padding: 10px 14px; }
+
+.volume-row {
+  display: flex; align-items: center; justify-content: center;
+  gap: 8px; margin-top: 8px; font-size: 12px; color: var(--sub);
+}
+.volume-row input[type="range"] { width: 100px; flex: none; }
+
+.status-toast {
+  position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+  background: #2d4a7a; color: #fff; padding: 10px 20px;
+  border-radius: 8px; font-size: 13px; opacity: 0;
+  transition: opacity .3s; pointer-events: none; z-index: 999;
+  white-space: nowrap;
+}
+.status-toast.show { opacity: 1; }
+.hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>🎵 音乐播放器</h1>
+  <p>点击下方区域选择音频文件</p>
+</div>
+
+<!-- 核心修改：用 label 关联 input，解决手机点击无效的问题 -->
+<label class="drop-zone" for="file-input" id="dropZone">
+  <div style="font-size:28px;margin-bottom:8px;">📂</div>
+  点击这里选择歌曲<br>
+  <span style="font-size:11px;opacity:0.7;">支持 MP3 / FLAC / APE / WAV / M4A / OGG / DSD<br>以及 NCM / QMC / MFLAC / MGG / KGM / KWM</span>
+  <input type="file" id="file-input" multiple accept="audio/*, .ncm, .qmc0, .qmc2, .qmc3, .qmcflac, .mflac, .mgg, .kgm, .kwm, .xm, .x2m">
+</label>
+
+<div id="playlist"></div>
+
+<div class="now-playing">
+  <div class="now-title" id="nowTitle">未播放</div>
+  <div class="now-sub" id="nowSub">—</div>
+  <div class="progress-row">
+    <span class="time" id="timeCur">00:00</span>
+    <input type="range" id="progress" min="0" max="1000" value="0">
+    <span class="time right" id="timeTotal">00:00</span>
+  </div>
+  <div class="controls">
+    <button class="btn small" id="btnPrev">⏮</button>
+    <button class="btn play" id="btnPlay">▶</button>
+    <button class="btn small" id="btnNext">⏭</button>
+  </div>
+  <div class="volume-row">
+    <span>🔊</span>
+    <input type="range" id="volume" min="0" max="100" value="70">
+    <span id="volLabel">70</span>
+  </div>
+</div>
+
+<div class="status-toast" id="toast"></div>
+
+<script type="module">
+// ============================================================
+//  解码引擎
+// ============================================================
+let audioCtx = null;
+let currentSource = null;
+let decodedBuffer = null;
+let isPlaying = false;
+let startTime = 0;
+let pauseOffset = 0;
+let currentIndex = -1;
+let playlist = [];
+let decryptCache = new Map();
+
+function getAudioCtx() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  return audioCtx;
+}
+
+async function decodeNative(arrayBuffer) {
+  return await getAudioCtx().decodeAudioData(arrayBuffer.slice(0));
+}
+
+let flacDecoder = null, apeDecoder = null, dsdDecoder = null;
+async function loadWasmDecoders() {
+  try {
+    const { FLACDecoder } = await import('https://esm.sh/@wasm-audio-decoders/flac@0.1.8');
+    flacDecoder = new FLACDecoder(); await flacDecoder.ready;
+  } catch (e) { console.warn('FLAC decoder 加载失败', e); }
+  try {
+    const apeMod = await import('https://esm.sh/@audio/decode-ape@0.1.0');
+    apeDecoder = apeMod.default || apeMod;
+  } catch (e) { console.warn('APE decoder 加载失败', e); }
+  try {
+    const dsdMod = await import('https://esm.sh/@audio/decode-dsd@0.1.0');
+    dsdDecoder = dsdMod.default || dsdMod;
+  } catch (e) { console.warn('DSD decoder 加载失败', e); }
+}
+
+async function decodeWithFallback(arrayBuffer, ext) {
+  try { return await decodeNative(arrayBuffer); } catch (e) {}
+  if (ext === 'flac' && flacDecoder) {
+    const result = await flacDecoder.decode(new Uint8Array(arrayBuffer));
+    return pcmToAudioBuffer(result.channelData, result.sampleRate);
+  }
+  if (ext === 'ape' && apeDecoder) {
+    const result = await apeDecoder(arrayBuffer);
+    return pcmToAudioBuffer(result.channelData, result.sampleRate);
+  }
+  if ((ext === 'dsf' || ext === 'dff') && dsdDecoder) {
+    const result = await dsdDecoder(arrayBuffer);
+    return pcmToAudioBuffer(result.channelData, result.sampleRate);
+  }
+  throw new Error(`无法解码 .${ext} 格式`);
+}
+
+function pcmToAudioBuffer(channelData, sampleRate) {
+  const ctx = getAudioCtx();
+  const length = channelData[0].length;
+  const buffer = ctx.createBuffer(channelData.length, length, sampleRate);
+  for (let ch = 0; ch < channelData.length; ch++) {
+    buffer.copyToChannel(channelData[ch] instanceof Float32Array
+      ? channelData[ch] : new Float32Array(channelData[ch]), ch);
+  }
+  return buffer;
+}
+
+// ============================================================
+//  加密格式解密
+// ============================================================
+const ENCRYPTED_EXTS = new Set([
+  'ncm', 'qmc0','qmc2','qmc3','qmc4','qmc6','qmc8',
+  'qmcflac','qmcogg','mflac','mflac0','mgg','mgg1','mggl','tkm',
+  'kgm','kgma','vpr','kgg','kwm','xm','x2m','x3m'
+]);
+
+function isEncrypted(filename) {
+  const ext = filename.split('.').pop().toLowerCase();
+  return ENCRYPTED_EXTS.has(ext);
+}
+
+async function decryptNCM(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const view = new DataView(arrayBuffer);
+  const magic = new TextDecoder().decode(data.slice(0, 8));
+  if (magic !== 'neteasecloudmusic') throw new Error('不是有效的 NCM 文件');
+  const keyLen = view.getUint32(0x10, true);
+  const keyData = data.slice(0x14, 0x14 + keyLen);
+  const rc4Key = new Uint8Array(keyLen);
+  for (let i = 0; i < keyLen; i++) rc4Key[i] = keyData[i] ^ 0x64;
+  const metaLen = view.getUint32(0x14 + keyLen, true);
+  const audioOffset = 0x18 + keyLen + metaLen + 5;
+  const audioData = data.slice(audioOffset);
+  const aesKey = new Uint8Array([0x68,0x7A,0x48,0x52,0x41,0x6D,0x73,0x6F,0x35,0x6B,0x49,0x6E,0x62,0x61,0x78,0x57]);
+  const cryptoKey = await crypto.subtle.importKey('raw', aesKey, { name: 'AES-CBC' }, false, ['decrypt']);
+  const decryptedKey = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-CBC', iv: new Uint8Array(16) }, cryptoKey, rc4Key.slice(0, 16)));
+  const decrypted = rc4Decrypt(audioData, decryptedKey);
+  return { data: decrypted, ext: detectAudioExt(decrypted), meta: {} };
+}
+
+function rc4Decrypt(data, key) {
+  const S = new Uint8Array(256);
+  for (let i = 0; i < 256; i++) S[i] = i;
+  let j = 0;
+  for (let i = 0; i < 256; i++) { j = (j + S[i] + key[i % key.length]) & 0xFF; [S[i], S[j]] = [S[j], S[i]]; }
+  const out = new Uint8Array(data.length);
+  let i = 0; j = 0;
+  for (let k = 0; k < data.length; k++) {
+    i = (i + 1) & 0xFF; j = (j + S[i]) & 0xFF; [S[i], S[j]] = [S[j], S[i]];
+    out[k] = data[k] ^ S[(S[i] + S[j]) & 0xFF];
+  }
+  return out;
+}
+
+async function decryptQMC(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const key = new Uint8Array(256);
+  const seed = [0x77,0x48,0x32,0x73,0xDE,0xF2,0xC0,0xC8,0x95,0xEC,0x30,0xB2,0x51,0xC3,0xE1,0xA0];
+  for (let i = 0; i < 256; i++) key[i] = seed[i % seed.length] ^ (i & 0xFF);
+  const out = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = data[i] ^ key[i % key.length];
+  return { data: out, ext: detectAudioExt(out), meta: {} };
+}
+
+async function decryptKGM(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const out = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = data[i] ^ (0xA4 + (i % 17) * 3) & 0xFF;
+  return { data: out, ext: detectAudioExt(out), meta: {} };
+}
+
+async function decryptKWM(arrayBuffer) {
+  const data = new Uint8Array(arrayBuffer);
+  const out = new Uint8Array(data.length);
+  for (let i = 0; i < data.length; i++) out[i] = data[i] ^ (0x5A + (i % 7) * 0x11) & 0xFF;
+  return { data: out, ext: detectAudioExt(out), meta: {} };
+}
+
+function detectAudioExt(data) {
+  if (data[0] === 0x49 && data[1] === 0x44 && data[2] === 0x33) return 'mp3';
+  if (data[0] === 0xFF && (data[1] & 0xE0) === 0xE0) return 'mp3';
+  if (data[0] === 0x66 && data[1] === 0x4C && data[2] === 0x61 && data[3] === 0x43) return 'flac';
+  if (data[0] === 0x4F && data[1] === 0x67 && data[2] === 0x67 && data[3] === 0x53) return 'ogg';
+  return 'mp3';
+}
+
+async function decryptFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  if (decryptCache.has(file.name)) return decryptCache.get(file.name);
+  const buf = await file.arrayBuffer();
+  let result;
+  if (ext === 'ncm') result = await decryptNCM(buf);
+  else if (ext.startsWith('qmc') || ['mflac','mgg','mgg1','tkm'].includes(ext)) result = await decryptQMC(buf);
+  else if (['kgm','kgma','vpr','kgg'].includes(ext)) result = await decryptKGM(buf);
+  else if (ext === 'kwm') result = await decryptKWM(buf);
+  else throw new Error(`不支持的加密格式: .${ext}`);
+  const blob = new Blob([result.data]);
+  const ret = { blob, ext: result.ext, meta: result.meta };
+  decryptCache.set(file.name, ret);
+  return ret;
+}
+
+// ============================================================
+//  播放核心
+// ============================================================
+async function playTrack(index) {
+  if (index < 0 || index >= playlist.length) return;
+  currentIndex = index;
+  const item = playlist[index];
+  updatePlaylistUI();
+  showToast(`加载: ${item.name}...`);
+  document.getElementById('nowTitle').textContent = item.name;
+  document.getElementById('nowSub').textContent = item.encrypted ? '正在解密...' : '正在解码...';
+
+  try {
+    let arrayBuffer, ext = item.name.split('.').pop().toLowerCase();
+    if (item.encrypted) {
+      const dec = await decryptFile(item.file);
+      arrayBuffer = await dec.blob.arrayBuffer(); ext = dec.ext;
+      document.getElementById('nowSub').textContent = `解密完成 → ${dec.ext.toUpperCase()}`;
+    } else {
+      arrayBuffer = await item.file.arrayBuffer();
+    }
+    decodedBuffer = await decodeWithFallback(arrayBuffer, ext);
+    stopCurrent();
+    const ctx = getAudioCtx();
+    if (ctx.state === 'suspended') await ctx.resume();
+    currentSource = ctx.createBufferSource();
+    currentSource.buffer = decodedBuffer;
+    currentSource.connect(ctx.destination);
+    currentSource.start(0);
+    startTime = ctx.currentTime; pauseOffset = 0; isPlaying = true;
+    currentSource.onended = () => {
+      if (isPlaying && currentIndex + 1 < playlist.length) playTrack(currentIndex + 1);
+      else { isPlaying = false; updatePlayButton(); }
+    };
+    document.getElementById('timeTotal').textContent = fmtTime(decodedBuffer.duration);
+    document.getElementById('nowSub').textContent = `${decodedBuffer.numberOfChannels}ch · ${(decodedBuffer.sampleRate/1000).toFixed(1)}kHz`;
+    updatePlayButton(); startProgressLoop(); showToast(`播放: ${item.name}`);
+  } catch (e) {
+    console.error(e); document.getElementById('nowSub').textContent = '解码失败';
+    showToast(`无法播放: ${e.message}`, true); isPlaying = false; updatePlayButton();
+  }
+}
+
+function stopCurrent() {
+  if (currentSource) { try { currentSource.stop(); } catch {} try { currentSource.disconnect(); } catch {} currentSource = null; }
+}
+
+function togglePlay() {
+  if (!decodedBuffer) { if (playlist.length) playTrack(0); return; }
+  const ctx = getAudioCtx();
+  if (isPlaying) {
+    pauseOffset += ctx.currentTime - startTime; stopCurrent(); isPlaying = false;
+  } else {
+    if (ctx.state === 'suspended') ctx.resume();
+    currentSource = ctx.createBufferSource(); currentSource.buffer = decodedBuffer;
+    currentSource.connect(ctx.destination);
+    currentSource.start(0, pauseOffset % decodedBuffer.duration);
+    startTime = ctx.currentTime; isPlaying = true; startProgressLoop();
+    currentSource.onended = () => {
+      if (isPlaying && currentIndex + 1 < playlist.length) playTrack(currentIndex + 1);
+      else { isPlaying = false; updatePlayButton(); }
+    };
+  }
+  updatePlayButton();
+}
+
+function getCurrentTime() {
+  if (!decodedBuffer || !audioCtx) return 0;
+  if (isPlaying) return pauseOffset + (audioCtx.currentTime - startTime);
+  return pauseOffset;
+}
+
+function seekTo(ratio) {
+  if (!decodedBuffer) return;
+  const t = ratio * decodedBuffer.duration; pauseOffset = t;
+  if (isPlaying) {
+    stopCurrent(); const ctx = getAudioCtx();
+    currentSource = ctx.createBufferSource(); currentSource.buffer = decodedBuffer;
+    currentSource.connect(ctx.destination); currentSource.start(0, t);
+    startTime = ctx.currentTime;
+    currentSource.onended = () => {
+      if (isPlaying && currentIndex + 1 < playlist.length) playTrack(currentIndex + 1);
+      else { isPlaying = false; updatePlayButton(); }
+    };
+  }
+}
+
+// ============================================================
+//  UI
+// ============================================================
+function fmtTime(sec) {
+  if (!isFinite(sec) || sec < 0) return '00:00';
+  const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+  return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+}
+
+function updatePlaylistUI() {
+  document.querySelectorAll('.track').forEach((el, i) => {
+    el.classList.toggle('active', i === currentIndex);
+  });
+}
+
+function updatePlayButton() {
+  document.getElementById('btnPlay').textContent = isPlaying ? '⏸' : '▶';
+}
+
+let progressTimer = null;
+function startProgressLoop() {
+  if (progressTimer) clearInterval(progressTimer);
+  progressTimer = setInterval(() => {
+    if (!decodedBuffer) return;
+    const cur = getCurrentTime(); const dur = decodedBuffer.duration;
+    document.getElementById('progress').value = Math.min(1000, (cur / dur) * 1000);
+    document.getElementById('timeCur').textContent = fmtTime(cur);
+  }, 200);
+}
+
+function showToast(msg, isError = false) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.background = isError ? '#7a2d2d' : '#2d4a7a';
+  t.classList.add('show');
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.classList.remove('show'), 2500);
+}
+
+// ============================================================
+//  文件导入与事件绑定 (核心修改区)
+// ============================================================
+const AUDIO_EXTS = new Set(['mp3','flac','wav','m4a','aac','ogg','oga','opus','ape','wv','wma','aiff','aif','dsf','dff','mpc','mp2','ac3','dts','mka','tak','tta']);
+
+function isSupported(name) {
+  const ext = name.split('.').pop().toLowerCase();
+  return AUDIO_EXTS.has(ext) || ENCRYPTED_EXTS.has(ext);
+}
+
+async function addFiles(files) {
+  let added = 0;
+  for (const f of files) {
+    if (!isSupported(f.name)) continue;
+    if (playlist.some(t => t.file.name === f.name && t.file.size === f.size)) continue;
+    const encrypted = isEncrypted(f.name);
+    playlist.push({ file: f, name: f.name.replace(/\.[^.]+$/, ''), encrypted });
+    added++;
+  }
+  renderPlaylist();
+  if (added) showToast(`已添加 ${added} 首`);
+  else showToast('没有找到支持的音频文件', true);
+}
+
+function renderPlaylist() {
+  const el = document.getElementById('playlist');
+  if (!playlist.length) {
+    el.innerHTML = '<div style="color:#555;text-align:center;padding:30px;font-size:12px;">播放列表为空</div>';
+    return;
+  }
+  el.innerHTML = playlist.map((t, i) => `
+    <div class="track ${i === currentIndex ? 'active' : ''}" data-index="${i}">
+      <span class="icon">${i === currentIndex && isPlaying ? '▶' : '♪'}</span>
+      <span class="name" title="${t.name}">${t.name}</span>
+      ${t.encrypted ? '<span class="badge locked">🔒 加密</span>' : ''}
+    </div>
+  `).join('');
+
+  el.querySelectorAll('.track').forEach(el => {
+    el.addEventListener('click', () => playTrack(parseInt(el.dataset.index)));
+  });
+}
+
+// 手机端真实点击触发
+document.getElementById('file-input').addEventListener('change', (e) => {
+  addFiles(Array.from(e.target.files));
+  e.target.value = ''; // 允许重复选择同一个文件
+});
+
+// 桌面端拖拽支持（手机上无效，但保留给电脑用）
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', async e => {
+  e.preventDefault(); dropZone.classList.remove('drag-over');
+  const files = [];
+  for (const item of e.dataTransfer.items) {
+    const entry = item.webkitGetAsEntry?.();
+    if (entry?.isDirectory) await collectDir(entry, files);
+    else { const f = item.getAsFile(); if (f) files.push(f); }
+  }
+  addFiles(files);
+});
+
+async function collectDir(entry, out) {
+  return new Promise(resolve => {
+    const reader = entry.createReader();
+    reader.readEntries(async entries => {
+      for (const e of entries) {
+        if (e.isDirectory) await collectDir(e, out);
+        else { const f = await new Promise(r => e.file(r)); if (f) out.push(f); }
+      }
+      resolve();
+    });
+  });
+}
+
+document.getElementById('btnPlay').addEventListener('click', togglePlay);
+document.getElementById('btnNext').addEventListener('click', () => { if (currentIndex + 1 < playlist.length) playTrack(currentIndex + 1); });
+document.getElementById('btnPrev').addEventListener('click', () => { if (currentIndex - 1 >= 0) playTrack(currentIndex - 1); });
+
+document.getElementById('progress').addEventListener('input', e => seekTo(e.target.value / 1000));
+document.getElementById('volume').addEventListener('input', e => {
+  const v = e.target.value; document.getElementById('volLabel').textContent = v;
+  if (audioCtx) { /* 音量简化处理，可后续添加 GainNode */ }
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
+  if (e.code === 'ArrowRight') document.getElementById('btnNext').click();
+  if (e.code === 'ArrowLeft') document.getElementById('btnPrev').click();
+});
+
+(async () => { await loadWasmDecoders(); showToast('就绪，点击上方选择歌曲'); renderPlaylist(); })();
+</script>
+</body>
+</html>
